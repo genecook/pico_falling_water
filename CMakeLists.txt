@@ -10,7 +10,7 @@ set(CMAKE_BUILD_TYPE Debug)
 
 pico_sdk_init()
 
-add_executable(rndstream main.c)
+add_executable(rndstream main.c gui.c)
 
 pico_enable_stdio_usb(rndstream 0)
 pico_enable_stdio_uart(rndstream 1)

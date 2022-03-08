@@ -4,6 +4,8 @@
 
 #include <pico/stdlib.h>
 
+#include "gui.h"
+
 #define width 70
 #define flipsPerLine 5
 #define sleepTime 100
@@ -12,6 +14,7 @@ void screen_saver();
 
 int main() { 
   stdio_init_all();
+  gui_startup();
   screen_saver();
   return 0;
 }
@@ -26,18 +29,21 @@ void screen_saver() {
   int l = strlen(ch);
 
   while(1) {
+    char tbuf[width];
     for (i = 0; i < width; i += 2) {
-       if (switches[i])
-         printf("%c ",ch[rand() % l]);
-       else
-	 printf("  ");
+       if (switches[i]) { 
+	 sprintf(tbuf,"%c ",ch[rand() % l]);
+	 print_line(tbuf);
+       } else {
+	 print_line("  ");
+      }
     }
     for (i = 0; i != flipsPerLine; ++i) {
       x = rand() % width;
       switches[x] = !switches[x];
     }
 
-    printf("\n");
+    print_line("\n");
 
     sleep_ms(sleepTime);
   }
