@@ -39,7 +39,8 @@ add_executable(rndstream main.c ${PICO_GUI}/lcd_touch_wrapper.c
 target_link_libraries(rndstream pico_stdlib pico_multicore lcd font config
                       pico_stdlib hardware_spi fatfs)
 
-target_compile_options(rndstream PRIVATE "-DUSE_MULTICORE=1 -DUSE_LCD=1")
+target_compile_options(rndstream PRIVATE -DUSE_MULTICORE=1 -DUSE_LCD=1)
+#target_compile_options(rndstream PRIVATE -DUSE_MULTICORE=1)
 
 pico_enable_stdio_usb(rndstream 0)
 pico_enable_stdio_uart(rndstream 1)

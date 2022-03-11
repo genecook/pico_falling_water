@@ -6,7 +6,7 @@
 #include <pico/util/queue.h>
 #include <pico/multicore.h>
 
-#include "gui.h"
+#include "lcd_touch_wrapper.h"
 
 //#define USE_MULTICORE 1
 //#define USE_LCD 1
@@ -14,15 +14,24 @@
 //#define width 70
 #define width 22
 #define flipsPerLine 5
-#define sleepTime 100
+#define sleepTime 50
 
 #define NCOLS 22
 #define NROWS 20
+#define FONT_16_WIDTH 11
+#define FONT_16_HEIGHT 16
 
 void screen_saver();
 
 #ifdef USE_MULTICORE
 char display_buffer[NROWS][NCOLS];
+
+struct coors {
+  int row;
+  int col;
+}
+  display_buffer_coors[NROWS][NCOLS];
+
 
 #define FLAG_VALUE 123
 
@@ -39,14 +48,21 @@ void core1_entry() {
     printf("ERROR, CORE 1 STARTUP???\n");
   }
 
+  for (int row = 0; row < NROWS; row++) {
+     for (int col = 0; col < NCOLS; col++) {
+	display_buffer[row][col] = ' ';
+	display_buffer_coors[row][col].row = row * FONT_16_HEIGHT;
+	display_buffer_coors[row][col].col = col * FONT_16_WIDTH;	
+     }
+  }
+
   // forever:
   //   1. retreive next queued up line of text.
   //   2. scroll the display buffer
   //   3. write line of text to 'display buffer
   //   4. update lcd from display buffer
 
-  while(1) {
-    
+  while(1) {    
     // get next line of text...
     char tbuf[NCOLS];
     queue_remove_blocking(&core1_cmd_queue, &tbuf);
@@ -65,22 +81,29 @@ void core1_entry() {
     
     // show updated display buffer...
 #ifdef USE_LCD
-    for (int row = 1; row < NROWS; row++) {
-       display_string(0, row, display_buffer[row]);
+    for (int row = 0; row < NROWS; row++) {
+       for (int col = 0; col < NCOLS; col++) {
+	  display_char(display_buffer_coors[row][col].col,
+		       display_buffer_coors[row][col].row,
+		       display_buffer[row][col],
+		       FONT_SIZE_16,
+		       COLOR_BLACK,
+		       COLOR_GREEN);
+       }
     }
     
-    // need to update entire lcd screen...
+    // no need to pause as its slow to write character (bit maps)
+    //   to lcd...
 #else
-    // Neither core should use minimal or no stdlib functions, or any
+    // Both cores should use minimal or no stdlib functions, or any
     // other sdk function that is not explicitely marked as
     // thread-safe...
     for (int i = 0; i < NCOLS; i++) {
        putchar(display_buffer[NROWS - 1][i]);
     }
     putchar('\n');
-#endif
-    
     sleep_ms(sleepTime); // pause after scrolling
+#endif    
   }
 
 }
@@ -91,6 +114,7 @@ int main() {
 
 #ifdef USE_LCD
   lcd_touch_startup();
+  clear_screen();
 #endif
 
 #ifdef USE_MULTICORE
