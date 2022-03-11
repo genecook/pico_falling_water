@@ -42,6 +42,8 @@ include_directories(${PICO_GUI})
 add_executable(rndstream main.c gui.c)
 target_link_libraries(rndstream pico_stdlib pico_multicore)
 
+target_compile_options(rndstream PRIVATE "-DUSE_MULTICORE=1")
+
 pico_enable_stdio_usb(rndstream 0)
 pico_enable_stdio_uart(rndstream 1)
 

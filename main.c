@@ -8,6 +8,8 @@
 
 #include "gui.h"
 
+//#define USE_MULTICORE 1
+
 //#define width 70
 #define width 22
 #define flipsPerLine 5
@@ -16,9 +18,10 @@
 #define NCOLS 22
 #define NROWS 20
 
-char display_buffer[NCOLS][NROWS];
-
 void screen_saver();
+
+#ifdef USE_MULTICORE
+char display_buffer[NCOLS][NROWS];
 
 #define FLAG_VALUE 123
 
@@ -57,15 +60,29 @@ void core1_entry() {
     }
     
     // show updated display buffer...
-    print_line(tbuf);
-    printf("\n");
+
+#ifdef USE_LCD
+
+#else
+    // Either core should use minimal or no stdlib functions, or any
+    // other sdk function that is not explicitely marked as
+    // thread-safe...
+    for(int i = 0; tbuf[i] != '\0'; i++) {
+      putchar(tbuf[i]);
+    }
+    putchar('\n');
+#endif
+    sleep_ms(sleepTime);    
   }
+
 }
+#endif
 
 int main() { 
   stdio_init_all();
   gui_startup();
-/*
+
+#ifdef USE_MULTICORE
   queue_init(&core1_cmd_queue, (sizeof(char) * NCOLS) + 1, 2);
   
   multicore_launch_core1(core1_entry);
@@ -77,7 +94,8 @@ int main() {
   } else {
     printf("ERROR, CORE 0 STARTUP???\n");
   }
-*/
+#endif
+  
   screen_saver();
   return 0;
 }
@@ -113,10 +131,11 @@ void screen_saver() {
       switches[x] = !switches[x];
     }
 
-    //queue_add_blocking(&core1_cmd_queue,&tbuf);
-
+#ifdef USE_MULTICORE
+    queue_add_blocking(&core1_cmd_queue,&tbuf);
+#else
     printf("%s\n",tbuf);
-    
     sleep_ms(sleepTime);
+#endif
   }
 }
