@@ -9,6 +9,7 @@
 #include "gui.h"
 
 //#define USE_MULTICORE 1
+//#define USE_LCD 1
 
 //#define width 70
 #define width 22
@@ -21,7 +22,7 @@
 void screen_saver();
 
 #ifdef USE_MULTICORE
-char display_buffer[NCOLS][NROWS];
+char display_buffer[NROWS][NCOLS];
 
 #define FLAG_VALUE 123
 
@@ -47,30 +48,34 @@ void core1_entry() {
   while(1) {
     
     // get next line of text...
-    char tbuf[NCOLS + 1];
+    char tbuf[NCOLS];
     queue_remove_blocking(&core1_cmd_queue, &tbuf);
 
     // scroll display buffer...
     for (int row = 1; row < NROWS; row++) {
       for (int col = 0; col < NCOLS; col++) {
-	 display_buffer[col][row - 1] = display_buffer[col][row]; 
+	 display_buffer[row - 1][col] = display_buffer[row][col]; 
       }
     }
     
     // write new line of text to display buffer...
     for (int i = 0; i < NCOLS; i++) {
-       display_buffer[i][NROWS - 1] = tbuf[i];
+       display_buffer[NROWS - 1][i] = tbuf[i];
     }
     
     // show updated display buffer...
 #ifdef USE_LCD
+    for (int row = 1; row < NROWS; row++) {
+       display_string(0, row, display_buffer[row]);
+    }
+    
     // need to update entire lcd screen...
 #else
     // Neither core should use minimal or no stdlib functions, or any
     // other sdk function that is not explicitely marked as
     // thread-safe...
     for (int i = 0; i < NCOLS; i++) {
-       putchar(display_buffer[i][NROWS - 1]);
+       putchar(display_buffer[NROWS - 1][i]);
     }
     putchar('\n');
 #endif
@@ -83,10 +88,13 @@ void core1_entry() {
 
 int main() { 
   stdio_init_all();
-  gui_startup();
+
+#ifdef USE_LCD
+  lcd_touch_startup();
+#endif
 
 #ifdef USE_MULTICORE
-  queue_init(&core1_cmd_queue, (sizeof(char) * NCOLS) + 1, 2);
+  queue_init(&core1_cmd_queue, (sizeof(char) * NCOLS), 2);
   
   multicore_launch_core1(core1_entry);
   uint32_t g = multicore_fifo_pop_blocking();
@@ -102,7 +110,8 @@ int main() {
   screen_saver();
   return 0;
 }
-  
+
+
 void screen_saver() {
   int i = 0, x = 0;
 
@@ -115,7 +124,7 @@ void screen_saver() {
   unsigned int rseed = 0;
   
   while(1) {
-    char tbuf[NCOLS + 1];
+    char tbuf[NCOLS];
 
     tbuf[0] = '\0';
     
