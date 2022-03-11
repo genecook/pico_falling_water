@@ -39,10 +39,13 @@ void core1_entry() {
   }
 
   // forever:
-  //    'scroll' the display, wait...
-  //    process next queued up line of text...
+  //   1. retreive next queued up line of text.
+  //   2. scroll the display buffer
+  //   3. write line of text to 'display buffer
+  //   4. update lcd from display buffer
 
   while(1) {
+    
     // get next line of text...
     char tbuf[NCOLS + 1];
     queue_remove_blocking(&core1_cmd_queue, &tbuf);
@@ -60,19 +63,19 @@ void core1_entry() {
     }
     
     // show updated display buffer...
-
 #ifdef USE_LCD
-
+    // need to update entire lcd screen...
 #else
-    // Either core should use minimal or no stdlib functions, or any
+    // Neither core should use minimal or no stdlib functions, or any
     // other sdk function that is not explicitely marked as
     // thread-safe...
-    for(int i = 0; tbuf[i] != '\0'; i++) {
-      putchar(tbuf[i]);
+    for (int i = 0; i < NCOLS; i++) {
+       putchar(display_buffer[i][NROWS - 1]);
     }
     putchar('\n');
 #endif
-    sleep_ms(sleepTime);    
+    
+    sleep_ms(sleepTime); // pause after scrolling
   }
 
 }
