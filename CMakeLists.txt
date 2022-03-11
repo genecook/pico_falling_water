@@ -31,18 +31,15 @@ include_directories(${PICO_LCD_LIB}/lib/font)
 include_directories(${PICO_LCD_LIB}/lib/fatfs)
 include_directories(${PICO_LCD_LIB}/lib/sdcard)
 
-#add_subdirectory(${PICO_GUI} pico_gui)
 include_directories(${PICO_GUI})
 
-#add_executable(rndstream main.c gui.c ${PICO_GUI}/lcd_touch_wrapper.c 
-#	       ${PICO_GUI}/my_fatfs_storage.c ${PICO_GUI}/my_track_touch.c)
-#
-#target_link_libraries(rndstream lcd font config pico_stdlib hardware_spi fatfs)
+add_executable(rndstream main.c ${PICO_GUI}/lcd_touch_wrapper.c 
+	       ${PICO_GUI}/my_fatfs_storage.c ${PICO_GUI}/my_track_touch.c)
 
-add_executable(rndstream main.c gui.c)
-target_link_libraries(rndstream pico_stdlib pico_multicore)
+target_link_libraries(rndstream pico_stdlib pico_multicore lcd font config
+                      pico_stdlib hardware_spi fatfs)
 
-target_compile_options(rndstream PRIVATE "-DUSE_MULTICORE=1")
+target_compile_options(rndstream PRIVATE "-DUSE_MULTICORE=1 -DUSE_LCD=1")
 
 pico_enable_stdio_usb(rndstream 0)
 pico_enable_stdio_uart(rndstream 1)
