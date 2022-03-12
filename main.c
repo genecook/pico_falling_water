@@ -25,6 +25,7 @@ void screen_saver();
 
 #ifdef USE_MULTICORE
 char display_buffer[NROWS][NCOLS];
+int starting_row = NROWS - 1; // use to speed up initial display
 
 struct coors {
   int row;
@@ -78,10 +79,10 @@ void core1_entry() {
     for (int i = 0; i < NCOLS; i++) {
        display_buffer[NROWS - 1][i] = tbuf[i];
     }
-    
+
     // show updated display buffer...
 #ifdef USE_LCD
-    for (int row = 0; row < NROWS; row++) {
+    for (int row = starting_row; row < NROWS; row++) {
        for (int col = 0; col < NCOLS; col++) {
 	  display_char(display_buffer_coors[row][col].col,
 		       display_buffer_coors[row][col].row,
@@ -91,7 +92,13 @@ void core1_entry() {
 		       COLOR_GREEN);
        }
     }
-    
+
+    // since display is initially blank, only need to (re)draw
+    // the last N rows, 'til the display buffer is full...
+    starting_row--;
+    if (starting_row < 0)
+      starting_row = 0;
+
     // no need to pause as its slow to write character (bit maps)
     //   to lcd...
 #else
