@@ -6,7 +6,10 @@
 #include <pico/util/queue.h>
 #include <pico/multicore.h>
 
-#include "lcd_touch_wrapper.h"
+#include "LCD_Driver.h"
+#include "LCD_Touch.h"
+#include "LCD_GUI.h"
+#include "LCD_Bmp.h"
 
 //#define USE_MULTICORE 1
 //#define USE_LCD 1
@@ -22,6 +25,12 @@
 #define FONT_16_HEIGHT 16
 
 void screen_saver();
+
+#ifdef USE_LCD
+void erase_line(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount);
+void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
+                    sFONT* Font, COLOR Color_Background, COLOR Color_Foreground);
+#endif
 
 #ifdef USE_MULTICORE
 char display_buffer[NROWS][NCOLS];
@@ -82,14 +91,24 @@ void core1_entry() {
 
     // show updated display buffer...
 #ifdef USE_LCD
+    sFONT* TP_Font = &Font16;
     for (int row = NROWS - 1; row >= starting_row; row--) {
-       for (int col = 0; col < NCOLS; col++) {
-	  display_char(display_buffer_coors[row][col].col,
-		       display_buffer_coors[row][col].row,
-		       display_buffer[row][col],
-		       FONT_SIZE_16,
-		       COLOR_BLACK,
-		       COLOR_GREEN);
+       erase_line(display_buffer_coors[row][0].col,
+		  display_buffer_coors[row][0].row,
+		  TP_Font,
+		  NCOLS);
+       for (int col = 0; (col < NCOLS) && (display_buffer[row][col] != '\0'); col++) {
+	  if (display_buffer[row][col] == ' ') {
+            // skip blanks
+	    continue;
+	  }
+	  my_GUI_DisChar(display_buffer_coors[row][col].col,
+		         display_buffer_coors[row][col].row,
+		         display_buffer[row][col],
+		         TP_Font,
+		         BLACK,
+		         GREEN
+		        );
        }
     }
 
@@ -116,12 +135,19 @@ void core1_entry() {
 }
 #endif
 
+#ifdef USE_LCD
+void InitTouchPanel( LCD_SCAN_DIR Lcd_ScanDir );
+#endif
+
 int main() { 
   stdio_init_all();
 
 #ifdef USE_LCD
-  lcd_touch_startup();
-  clear_screen();
+  System_Init();
+  LCD_Init(SCAN_DIR_DFT,800);
+  InitTouchPanel(SCAN_DIR_DFT);
+  GUI_Show();
+  GUI_Clear(BLACK);
 #endif
 
 #ifdef USE_MULTICORE
@@ -141,7 +167,6 @@ int main() {
   screen_saver();
   return 0;
 }
-
 
 void screen_saver() {
   int i = 0, x = 0;
@@ -182,3 +207,39 @@ void screen_saver() {
 #endif
   }
 }
+
+#ifdef USE_LCD
+
+extern LCD_DIS sLCD_DIS;
+
+void erase_line(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
+  POINT Xend = Xstart + (Font->Width * Ncount);
+  POINT Yend = Ystart + Font->Height;
+  LCD_SetArealColor( Xstart, Ystart, Xend, Yend, BLACK);
+}
+
+// adapted from vendor supplied GUI_DisChar routine...
+
+void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
+                    sFONT* Font, COLOR Color_Background, COLOR Color_Foreground) {
+
+    POINT Page, Column;
+
+    uint32_t Char_Offset = (Acsii_Char - ' ') * Font->Height * (Font->Width / 8 + (Font->Width % 8 ? 1 : 0));
+    const unsigned char *ptr = &Font->table[Char_Offset];
+
+    for (Page = 0; Page < Font->Height; Page ++ ) {
+       for (Column = 0; Column < Font->Width; Column ++ ) {
+	  if (*ptr & (0x80 >> (Column % 8))) {
+            LCD_SetPointlColor(Xpoint + Column, Ypoint + Page, Color_Foreground);
+	  }
+          //One pixel is 8 bits
+          if (Column % 8 == 7)
+            ptr++;
+       }/* Write a line */
+       if (Font->Width % 8 != 0)
+         ptr++;
+   }
+}
+#endif
+
