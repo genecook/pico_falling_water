@@ -13,8 +13,11 @@
 //#define USE_MULTICORE 1
 //#define USE_LCD 1
 
-//#define width 70
+#ifdef USE_LCD
 #define width 22
+#else
+#define width 70
+#endif
 #define flipsPerLine 5
 #define sleepTime 50
 
@@ -26,14 +29,14 @@
 void screen_saver();
 
 #ifdef USE_LCD
-void erase_line(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount);
+void erase_row(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount);
+void erase_col(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount);
 void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
                     sFONT* Font, COLOR Color_Background, COLOR Color_Foreground);
 #endif
 
 #ifdef USE_MULTICORE
 char display_buffer[NROWS][NCOLS];
-int starting_row = NROWS - 1; // use to speed up initial display
 
 struct coors {
   int row;
@@ -68,6 +71,8 @@ void core1_entry() {
     printf("ERROR, CORE 1 STARTUP???\n");
   }
 
+  // calculate,record, display coordinates for each display buffer
+  // character...
   for (int row = 0; row < NROWS; row++) {
      for (int col = 0; col < NCOLS; col++) {
 	display_buffer[row][col] = ' ';
@@ -87,31 +92,25 @@ void core1_entry() {
     char tbuf[NCOLS];
     queue_remove_blocking(&core1_cmd_queue, &tbuf);
 
-    // scroll display buffer...
-    for (int row = 1; row < NROWS; row++) {
+    // scroll display buffer down one row...
+    for (int row = NROWS - 1; row > 0; row--) {
       for (int col = 0; col < NCOLS; col++) {
-	 display_buffer[row - 1][col] = display_buffer[row][col]; 
+	 display_buffer[row][col] = display_buffer[row - 1][col]; 
       }
     }
     
-    // write new line of text to display buffer...
+    // insert new line of text in display buffer, row zero...
     for (int i = 0; i < NCOLS; i++) {
-       display_buffer[NROWS - 1][i] = tbuf[i];
+       display_buffer[0][i] = tbuf[i];
     }
 
     // show updated display buffer...
 #ifdef USE_LCD
     sFONT* TP_Font = &Font16;
-    for (int row = NROWS - 1; row >= starting_row; row--) {
-       erase_line(display_buffer_coors[row][0].col,
-		  display_buffer_coors[row][0].row,
-		  TP_Font,
-		  NCOLS);
-       for (int col = 0; (col < NCOLS) && (display_buffer[row][col] != '\0'); col++) {
-	  if (display_buffer[row][col] == ' ') {
-            // skip blanks
-	    continue;
-	  }
+
+    // write each column...
+    for (int col = 0; col < NCOLS; col++) {
+      for (int row = 0; row < NROWS; row++) {
 	  my_GUI_DisChar(display_buffer_coors[row][col].col,
 		         display_buffer_coors[row][col].row,
 		         display_buffer[row][col],
@@ -121,12 +120,6 @@ void core1_entry() {
 		        );
        }
     }
-
-    // since display is initially blank, only need to (re)draw
-    // the last N rows, 'til the display buffer is full...
-    starting_row--;
-    if (starting_row < 0)
-      starting_row = 0;
 
     // no need to pause as its slow to write character (bit maps)
     //   to lcd...
@@ -234,9 +227,15 @@ extern LCD_DIS sLCD_DIS;
 // entire rows...
 //***************************************************************************
 
-void erase_line(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
+void erase_row(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
   POINT Xend = Xstart + (Font->Width * Ncount);
   POINT Yend = Ystart + Font->Height;
+  LCD_SetArealColor( Xstart, Ystart, Xend, Yend, BLACK);
+}
+
+void erase_col(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
+  POINT Xend = Xstart + Font->Width;
+  POINT Yend = Ystart + (Font->Height * Ncount);
   LCD_SetArealColor( Xstart, Ystart, Xend, Yend, BLACK);
 }
 
@@ -246,6 +245,8 @@ void erase_line(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
 
 void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
                     sFONT* Font, COLOR Color_Background, COLOR Color_Foreground) {
+
+    erase_col(Xpoint,Ypoint,Font,1); // effectively, erase entire character
 
     POINT Page, Column;
 
