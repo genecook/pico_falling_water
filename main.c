@@ -7,7 +7,6 @@
 #include <pico/multicore.h>
 
 #include "LCD_Driver.h"
-#include "LCD_Touch.h"
 #include "LCD_GUI.h"
 #include "LCD_Bmp.h"
 
@@ -46,6 +45,17 @@ struct coors {
 #define FLAG_VALUE 123
 
 queue_t core1_cmd_queue;
+
+//***************************************************************************
+// Austensibly, core 1 is responsible for maintaining/displaying a text
+// screen buffer. Core 0 generates/queues up lines of text to be written
+// to the display.
+// 1st cut: Vendor supplied functions to write characters to the display
+//          modified in an attempt to optimize (speed up) drawing time.
+// 2nd cut: (TBD) Add code to allow core 0 to assist in the rendering of text
+//          lines to the display. The display is shared by both cores via
+//          semaphore.
+//***************************************************************************
 
 void core1_entry() {
   multicore_fifo_push_blocking(FLAG_VALUE);
@@ -139,15 +149,18 @@ void core1_entry() {
 void InitTouchPanel( LCD_SCAN_DIR Lcd_ScanDir );
 #endif
 
-int main() { 
-  stdio_init_all();
+//***************************************************************************
+// main entry point...
+//***************************************************************************
 
+int main() { 
 #ifdef USE_LCD
   System_Init();
   LCD_Init(SCAN_DIR_DFT,800);
-  InitTouchPanel(SCAN_DIR_DFT);
   GUI_Show();
   GUI_Clear(BLACK);
+#else
+  stdio_init_all();  
 #endif
 
 #ifdef USE_MULTICORE
@@ -167,6 +180,10 @@ int main() {
   screen_saver();
   return 0;
 }
+
+//***************************************************************************
+// take the red pill...
+//***************************************************************************
 
 void screen_saver() {
   int i = 0, x = 0;
@@ -212,13 +229,20 @@ void screen_saver() {
 
 extern LCD_DIS sLCD_DIS;
 
+//***************************************************************************
+// instead of erasing individual characters from the display, blank out
+// entire rows...
+//***************************************************************************
+
 void erase_line(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
   POINT Xend = Xstart + (Font->Width * Ncount);
   POINT Yend = Ystart + Font->Height;
   LCD_SetArealColor( Xstart, Ystart, Xend, Yend, BLACK);
 }
 
+//***************************************************************************
 // adapted from vendor supplied GUI_DisChar routine...
+//***************************************************************************
 
 void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
                     sFONT* Font, COLOR Color_Background, COLOR Color_Foreground) {
