@@ -82,7 +82,7 @@ void core1_entry() {
 
     // show updated display buffer...
 #ifdef USE_LCD
-    for (int row = starting_row; row < NROWS; row++) {
+    for (int row = NROWS - 1; row >= starting_row; row--) {
        for (int col = 0; col < NCOLS; col++) {
 	  display_char(display_buffer_coors[row][col].col,
 		       display_buffer_coors[row][col].row,
