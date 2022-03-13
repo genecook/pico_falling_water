@@ -4,6 +4,7 @@
 
 #include <pico/stdlib.h>
 #include <pico/util/queue.h>
+#include <pico/sem.h>
 #include <pico/multicore.h>
 
 #include "LCD_Driver.h"
@@ -47,7 +48,9 @@ struct coors {
 
 #define FLAG_VALUE 123
 
-queue_t core1_cmd_queue;
+queue_t     core1_cmd_queue;
+queue_t     display_queue;
+semaphore_t display_char_sem;
 
 //***************************************************************************
 // Austensibly, core 1 is responsible for maintaining/displaying a text
@@ -59,6 +62,8 @@ queue_t core1_cmd_queue;
 //          lines to the display. The display is shared by both cores via
 //          semaphore.
 //***************************************************************************
+
+void update_display();
 
 void core1_entry() {
   multicore_fifo_push_blocking(FLAG_VALUE);
@@ -108,19 +113,15 @@ void core1_entry() {
 #ifdef USE_LCD
     sFONT* TP_Font = &Font16;
 
-    // write each column...
-    for (int col = 0; col < NCOLS; col++) {
-      for (int row = 0; row < NROWS; row++) {
-	  my_GUI_DisChar(display_buffer_coors[row][col].col,
-		         display_buffer_coors[row][col].row,
-		         display_buffer[row][col],
-		         TP_Font,
-		         BLACK,
-		         GREEN
-		        );
-       }
+    // queue up 'request' (column index) to write each column
+    // (fudging here; actually every other column)
+    
+    for (int col = 0; col < NCOLS; col += 2) {
+      queue_add_blocking(&display_queue,&col);
     }
 
+    update_display();
+    
     // no need to pause as its slow to write character (bit maps)
     //   to lcd...
 #else
@@ -134,9 +135,26 @@ void core1_entry() {
     sleep_ms(sleepTime); // pause after scrolling
 #endif    
   }
-
 }
 #endif
+
+void update_display() {    
+  while( !queue_is_empty(&display_queue) ) {
+    int col;
+    queue_remove_blocking(&display_queue, &col);
+    sFONT* TP_Font = &Font16;
+
+    for (int row = 0; row < NROWS; row++) {
+       my_GUI_DisChar(display_buffer_coors[row][col].col,
+		      display_buffer_coors[row][col].row,
+		      display_buffer[row][col],
+		      TP_Font,
+		      BLACK,
+		      GREEN
+		     );
+    }
+  }
+}
 
 #ifdef USE_LCD
 void InitTouchPanel( LCD_SCAN_DIR Lcd_ScanDir );
@@ -158,6 +176,8 @@ int main() {
 
 #ifdef USE_MULTICORE
   queue_init(&core1_cmd_queue, (sizeof(char) * NCOLS), 2);
+  queue_init(&display_queue, sizeof(int), NCOLS);
+  sem_init(&display_char_sem,1,1);
   
   multicore_launch_core1(core1_entry);
   uint32_t g = multicore_fifo_pop_blocking();
@@ -211,11 +231,13 @@ void screen_saver() {
 
 #ifdef USE_MULTICORE
     queue_add_blocking(&core1_cmd_queue,&tbuf);
+    update_display();
 #else
     printf("%s\n",tbuf);
     sleep_ms(sleepTime);
 #endif
   }
+  
 }
 
 #ifdef USE_LCD
@@ -230,13 +252,17 @@ extern LCD_DIS sLCD_DIS;
 void erase_row(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
   POINT Xend = Xstart + (Font->Width * Ncount);
   POINT Yend = Ystart + Font->Height;
+  sem_acquire_blocking(&display_char_sem);
   LCD_SetArealColor( Xstart, Ystart, Xend, Yend, BLACK);
+  sem_release(&display_char_sem);
 }
 
 void erase_col(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
   POINT Xend = Xstart + Font->Width;
   POINT Yend = Ystart + (Font->Height * Ncount);
+  sem_acquire_blocking(&display_char_sem);
   LCD_SetArealColor( Xstart, Ystart, Xend, Yend, BLACK);
+  sem_release(&display_char_sem);
 }
 
 //***************************************************************************
@@ -246,25 +272,27 @@ void erase_col(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
 void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
                     sFONT* Font, COLOR Color_Background, COLOR Color_Foreground) {
 
-    erase_col(Xpoint,Ypoint,Font,1); // effectively, erase entire character
+  erase_col(Xpoint,Ypoint,Font,1); // effectively, erase entire character
+    
+  POINT Page, Column;
 
-    POINT Page, Column;
+  uint32_t Char_Offset = (Acsii_Char - ' ') * Font->Height * (Font->Width / 8 + (Font->Width % 8 ? 1 : 0));
+  const unsigned char *ptr = &Font->table[Char_Offset];
 
-    uint32_t Char_Offset = (Acsii_Char - ' ') * Font->Height * (Font->Width / 8 + (Font->Width % 8 ? 1 : 0));
-    const unsigned char *ptr = &Font->table[Char_Offset];
-
-    for (Page = 0; Page < Font->Height; Page ++ ) {
-       for (Column = 0; Column < Font->Width; Column ++ ) {
-	  if (*ptr & (0x80 >> (Column % 8))) {
-            LCD_SetPointlColor(Xpoint + Column, Ypoint + Page, Color_Foreground);
-	  }
-          //One pixel is 8 bits
-          if (Column % 8 == 7)
-            ptr++;
-       }/* Write a line */
-       if (Font->Width % 8 != 0)
-         ptr++;
-   }
+  for (Page = 0; Page < Font->Height; Page ++ ) {
+     for (Column = 0; Column < Font->Width; Column ++ ) {
+	if (*ptr & (0x80 >> (Column % 8))) {
+          sem_acquire_blocking(&display_char_sem);
+          LCD_SetPointlColor(Xpoint + Column, Ypoint + Page, Color_Foreground);	
+          sem_release(&display_char_sem);
+        }
+        //One pixel is 8 bits
+        if (Column % 8 == 7)
+          ptr++;
+     }/* Write a line */
+     if (Font->Width % 8 != 0)
+       ptr++;
+  }
 }
 #endif
 
