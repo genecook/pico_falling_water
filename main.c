@@ -11,23 +11,132 @@
 #include "LCD_GUI.h"
 #include "LCD_Bmp.h"
 
-#define width 22
-#define flipsPerLine 5
-#define sleepTime 50
+//***************************************************************************
+// Program that writes random columns of text to an LCD display, crudely
+// simulating the streams of text you see in the Matrix.
+//
+// Runs on Raspberry Pi Pico. Uses Waveshare 2.8 LCD/touch panel.
+//***************************************************************************
 
-#define NCOLS 22
-#define NROWS 20
-#define FONT_16_WIDTH 11
+// using the vendor-supplied ascii character font, size 16 (16 high, 11 wide)...
+
 #define FONT_16_HEIGHT 16
+#define FONT_16_WIDTH  11
+
+// results in 20 rows of 22 characters per row...
+
+#define NROWS 20
+#define NCOLS 22
+
+
+#define FLAG_VALUE 123
+
+queue_t     core1_cmd_queue;  // used to write new lines of text to display buffer
+queue_t     display_queue;    // used to cause individual display buffer columns
+                              //   to be updated
+semaphore_t display_char_sem; // used to insure only one core at a time writes
+                              //   to LCD
 
 void screen_saver();
+void core1_entry();
+void setup_display_updates(unsigned int *rseed);
+void update_display();
+
+//***************************************************************************
+// main entry point...
+//***************************************************************************
+
+int main() { 
+  System_Init();
+  LCD_Init(SCAN_DIR_DFT,800);
+  GUI_Show();
+  GUI_Clear(BLACK);
+
+  queue_init(&core1_cmd_queue, (sizeof(char) * NCOLS), 2);
+  queue_init(&display_queue, sizeof(int), NCOLS);
+  sem_init(&display_char_sem,1,1);
+  
+  multicore_launch_core1(core1_entry);
+  uint32_t g = multicore_fifo_pop_blocking();
+
+  if (g == FLAG_VALUE) {
+    // what we expected...
+    multicore_fifo_push_blocking(FLAG_VALUE);
+  } else {
+    printf("ERROR, CORE 0 STARTUP???\n");
+    return 0;
+  }
+  
+  screen_saver();
+  return 0;
+}
+
+//***************************************************************************
+// take the red pill...
+//***************************************************************************
+
+#define width NCOLS
+#define flipsPerLine 5
+
+void screen_saver() {
+  int i = 0, x = 0;
+
+  int switches[width] = {0};
+  
+  char *ch = "1234567890qwertyuiopasdfghjklzxcvbnm,./';[]!@#$%^&*()-=_+";
+
+  int l = strlen(ch);
+
+  unsigned int rseed = 0;
+  
+  while(1) {
+    char tbuf[NCOLS];
+
+    tbuf[0] = '\0';
+    
+    for (i = 0; i < width; i += 2) {
+       // notice that only every other character is non-blank
+       // (we'll use this to cheat on display update later on)
+       if (switches[i]) { 
+         char xc[width];
+	 sprintf(xc,"%c ", ch[rand_r(&rseed) % l]);
+	 strcat(tbuf,xc); // note that one core can safely use the Pico C
+	                  // runtime, but not both, ie, the SDK is not
+	                  // thread safe, except where explicitely stated
+       } else {
+	 strcat(tbuf,"  ");
+       }
+    }
+
+    for (i = 0; i != flipsPerLine; ++i) {
+       x = rand() % width;
+       switches[x] = !switches[x];
+    }
+
+    // prep for display updating...
+    setup_display_updates(&rseed);
+    
+    // issue request to write next line of text to the display...
+    queue_add_blocking(&core1_cmd_queue,&tbuf);
+
+    // assist the other core with the display update...
+    update_display();
+  } 
+}
+
 
 void erase_row(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount);
 void erase_col(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount);
 void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
                     sFONT* Font, COLOR Color_Background, COLOR Color_Foreground);
 
+// this is our text 'display buffer':
+
 char display_buffer[NROWS][NCOLS];
+
+// (LCD) screen coordinates for every character in the display buffer above:
+// (used in early attempt to speed things up, but LCD speed, or lack thereof,
+// renders this 'optimization' ineffective. sigh)
 
 struct coors {
   int row;
@@ -35,25 +144,19 @@ struct coors {
 }
   display_buffer_coors[NROWS][NCOLS];
 
-
-#define FLAG_VALUE 123
-
-queue_t     core1_cmd_queue;
-queue_t     display_queue;
-semaphore_t display_char_sem;
-
 //***************************************************************************
 // Austensibly, core 1 is responsible for maintaining/displaying a text
 // screen buffer. Core 0 generates/queues up lines of text to be written
 // to the display.
+//
 // 1st cut: Vendor supplied functions to write characters to the display
 //          modified in an attempt to optimize (speed up) drawing time.
-// 2nd cut: (TBD) Add code to allow core 0 to assist in the rendering of text
+// 2nd cut: Added code to allow core 0 to assist in the rendering of text
 //          lines to the display. The display is shared by both cores via
 //          semaphore.
+// 3rd cut: Let core 0 dictate the order in which columns of the display
+//          are updated. Results in a more random display update.
 //***************************************************************************
-
-void update_display();
 
 void core1_entry() {
   multicore_fifo_push_blocking(FLAG_VALUE);
@@ -64,6 +167,7 @@ void core1_entry() {
     // what we expected...
   } else {
     printf("ERROR, CORE 1 STARTUP???\n");
+    return;
   }
 
   // calculate,record, display coordinates for each display buffer
@@ -103,16 +207,38 @@ void core1_entry() {
     
     sFONT* TP_Font = &Font16;
 
-    // queue up 'request' (column index) to write each column
-    // (fudging here; actually every other column)
-    
-    //for (int col = 0; col < NCOLS; col += 2) {
-    //   queue_add_blocking(&display_queue,&col);
-    //}
-
     update_display();
   }
 }
+
+//***************************************************************************
+// Setup for updating the display by queueing up the indices for display
+// columns to be updated, in random order...
+//***************************************************************************
+
+void setup_display_updates(unsigned int *rseed) {
+    int col_array[NCOLS]; // array of display buffer columns to be updated
+    int n = 0;            // # of display buffer columns to update
+    for (int col = 0; col < NCOLS; col += 2) { // only update columns
+      col_array[n++] = col;                    // with non-blank characters
+    }
+    // random shuffle of display buffer 'update' columns...
+    for (int i = 0; i < n - 1; i++) {
+       int j = i + rand_r(rseed) / (RAND_MAX / (n - i) + 1);
+       int t = col_array[j];
+       col_array[j] = col_array[i];
+       col_array[i] = t;
+    }
+    // queue up 'request' (column index) to write each column...
+    for (int col = 0; col < n; col += 2) {
+       queue_add_blocking(&display_queue,&col_array[col]);
+    }
+}
+
+//***************************************************************************
+// Retreive queued up display column indices, update display columns,
+// until there are no more to update. Both cores may use this method...
+//***************************************************************************
 
 void update_display() {    
   while( !queue_is_empty(&display_queue) ) {
@@ -133,105 +259,14 @@ void update_display() {
 }
 
 //***************************************************************************
-// main entry point...
+// Instead of erasing individual characters from the display, blank out
+// entire rows or columns.
+//
+// Uses semaphore to allow both cores to use this function to update
+// the display.
 //***************************************************************************
-
-int main() { 
-  System_Init();
-  LCD_Init(SCAN_DIR_DFT,800);
-  GUI_Show();
-  GUI_Clear(BLACK);
-
-  queue_init(&core1_cmd_queue, (sizeof(char) * NCOLS), 2);
-  queue_init(&display_queue, sizeof(int), NCOLS);
-  sem_init(&display_char_sem,1,1);
-  
-  multicore_launch_core1(core1_entry);
-  uint32_t g = multicore_fifo_pop_blocking();
-
-  if (g == FLAG_VALUE) {
-    // what we expected...
-    multicore_fifo_push_blocking(FLAG_VALUE);
-  } else {
-    printf("ERROR, CORE 0 STARTUP???\n");
-  }
-  
-  screen_saver();
-  return 0;
-}
-
-//***************************************************************************
-// take the red pill...
-//***************************************************************************
-
-void screen_saver() {
-  int i = 0, x = 0;
-
-  int switches[width] = {0};
-  
-  char *ch = "1234567890qwertyuiopasdfghjklzxcvbnm,./';[]!@#$%^&*()-=_+";
-
-  int l = strlen(ch);
-
-  unsigned int rseed = 0;
-  
-  while(1) {
-    char tbuf[NCOLS];
-
-    tbuf[0] = '\0';
-    
-    for (i = 0; i < width; i += 2) {
-       // notice that only every other character is non-blank...
-       if (switches[i]) { 
-         char xc[width];
-	 sprintf(xc,"%c ", ch[rand_r(&rseed) % l]);
-	 strcat(tbuf,xc);
-       } else {
-	 strcat(tbuf,"  ");
-       }
-    }
-
-    for (i = 0; i != flipsPerLine; ++i) {
-       x = rand() % width;
-       switches[x] = !switches[x];
-    }
-
-    // setup display update requests...
-    
-    int col_array[NCOLS]; // array of display buffer columns to be updated
-    int n = 0;            // # of display buffer columns to update
-    for (int col = 0; col < NCOLS; col += 2) { // only update columns
-      col_array[n++] = col;                    // with non-blank characters
-    }
-    // random shuffle of display buffer 'update' columns...
-    for (int i = 0; i < n - 1; i++) {
-       int j = i + rand_r(&rseed) / (RAND_MAX / (n - i) + 1);
-       int t = col_array[j];
-       col_array[j] = col_array[i];
-       col_array[i] = t;
-    }
-    // queue up 'request' (column index) to write each column...
-    for (int col = 0; col < n; col += 2) {
-       queue_add_blocking(&display_queue,&col_array[col]);
-    }
-
-    // then issue request to write next line of text to the
-    // display...
-    
-    queue_add_blocking(&core1_cmd_queue,&tbuf);
-
-    // assist the other core with the display update...
-    update_display();
-  }
-  
-}
 
 extern LCD_DIS sLCD_DIS;
-
-//***************************************************************************
-// instead of erasing individual characters from the display, blank out
-// entire rows...
-//***************************************************************************
 
 void erase_row(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
   POINT Xend = Xstart + (Font->Width * Ncount);
@@ -250,7 +285,12 @@ void erase_col(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
 }
 
 //***************************************************************************
-// adapted from vendor supplied GUI_DisChar routine...
+// Write a single character to the (LCD) display.
+//
+// Adapted from vendor supplied GUI_DisChar routine...
+//
+// Uses semaphore to allow both cores to use this function to update
+// the display.
 //***************************************************************************
 
 void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
