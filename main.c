@@ -11,14 +11,7 @@
 #include "LCD_GUI.h"
 #include "LCD_Bmp.h"
 
-//#define USE_MULTICORE 1
-//#define USE_LCD 1
-
-#ifdef USE_LCD
 #define width 22
-#else
-#define width 70
-#endif
 #define flipsPerLine 5
 #define sleepTime 50
 
@@ -29,14 +22,11 @@
 
 void screen_saver();
 
-#ifdef USE_LCD
 void erase_row(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount);
 void erase_col(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount);
 void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
                     sFONT* Font, COLOR Color_Background, COLOR Color_Foreground);
-#endif
 
-#ifdef USE_MULTICORE
 char display_buffer[NROWS][NCOLS];
 
 struct coors {
@@ -110,33 +100,19 @@ void core1_entry() {
     }
 
     // show updated display buffer...
-#ifdef USE_LCD
+    
     sFONT* TP_Font = &Font16;
 
     // queue up 'request' (column index) to write each column
     // (fudging here; actually every other column)
     
-    for (int col = 0; col < NCOLS; col += 2) {
-      queue_add_blocking(&display_queue,&col);
-    }
+    //for (int col = 0; col < NCOLS; col += 2) {
+    //   queue_add_blocking(&display_queue,&col);
+    //}
 
     update_display();
-    
-    // no need to pause as its slow to write character (bit maps)
-    //   to lcd...
-#else
-    // Both cores should use minimal or no stdlib functions, or any
-    // other sdk function that is not explicitely marked as
-    // thread-safe...
-    for (int i = 0; i < NCOLS; i++) {
-       putchar(display_buffer[NROWS - 1][i]);
-    }
-    putchar('\n');
-    sleep_ms(sleepTime); // pause after scrolling
-#endif    
   }
 }
-#endif
 
 void update_display() {    
   while( !queue_is_empty(&display_queue) ) {
@@ -156,25 +132,16 @@ void update_display() {
   }
 }
 
-#ifdef USE_LCD
-void InitTouchPanel( LCD_SCAN_DIR Lcd_ScanDir );
-#endif
-
 //***************************************************************************
 // main entry point...
 //***************************************************************************
 
 int main() { 
-#ifdef USE_LCD
   System_Init();
   LCD_Init(SCAN_DIR_DFT,800);
   GUI_Show();
   GUI_Clear(BLACK);
-#else
-  stdio_init_all();  
-#endif
 
-#ifdef USE_MULTICORE
   queue_init(&core1_cmd_queue, (sizeof(char) * NCOLS), 2);
   queue_init(&display_queue, sizeof(int), NCOLS);
   sem_init(&display_char_sem,1,1);
@@ -188,7 +155,6 @@ int main() {
   } else {
     printf("ERROR, CORE 0 STARTUP???\n");
   }
-#endif
   
   screen_saver();
   return 0;
@@ -215,6 +181,7 @@ void screen_saver() {
     tbuf[0] = '\0';
     
     for (i = 0; i < width; i += 2) {
+       // notice that only every other character is non-blank...
        if (switches[i]) { 
          char xc[width];
 	 sprintf(xc,"%c ", ch[rand_r(&rseed) % l]);
@@ -225,22 +192,39 @@ void screen_saver() {
     }
 
     for (i = 0; i != flipsPerLine; ++i) {
-      x = rand() % width;
-      switches[x] = !switches[x];
+       x = rand() % width;
+       switches[x] = !switches[x];
     }
 
-#ifdef USE_MULTICORE
+    // setup display update requests...
+    
+    int col_array[NCOLS]; // array of display buffer columns to be updated
+    int n = 0;            // # of display buffer columns to update
+    for (int col = 0; col < NCOLS; col += 2) { // only update columns
+      col_array[n++] = col;                    // with non-blank characters
+    }
+    // random shuffle of display buffer 'update' columns...
+    for (int i = 0; i < n - 1; i++) {
+       int j = i + rand_r(&rseed) / (RAND_MAX / (n - i) + 1);
+       int t = col_array[j];
+       col_array[j] = col_array[i];
+       col_array[i] = t;
+    }
+    // queue up 'request' (column index) to write each column...
+    for (int col = 0; col < n; col += 2) {
+       queue_add_blocking(&display_queue,&col_array[col]);
+    }
+
+    // then issue request to write next line of text to the
+    // display...
+    
     queue_add_blocking(&core1_cmd_queue,&tbuf);
+
+    // assist the other core with the display update...
     update_display();
-#else
-    printf("%s\n",tbuf);
-    sleep_ms(sleepTime);
-#endif
   }
   
 }
-
-#ifdef USE_LCD
 
 extern LCD_DIS sLCD_DIS;
 
@@ -294,5 +278,4 @@ void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
        ptr++;
   }
 }
-#endif
 
