@@ -293,9 +293,42 @@ void erase_col(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
 // the display.
 //***************************************************************************
 
+#define BLAST_LCD_CHAR 1
+
+#ifdef BLAST_LCD_CHAR
+void my_GUI_DisChar(POINT Xstart, POINT Ystart, const char Acsii_Char,
+                    sFONT* Font, COLOR Color_Background, COLOR Color_Foreground) {
+  
+  uint32_t Char_Offset = (Acsii_Char - ' ') * Font->Height * (Font->Width / 8 + (Font->Width % 8 ? 1 : 0));
+  
+  const unsigned char *ptr = &Font->table[Char_Offset];
+
+  sem_acquire_blocking(&display_char_sem); // only one core at a time should access the LCD 
+
+  LCD_SetWindow(Xstart, Ystart, Xstart + Font->Width, Ystart + Font->Height);
+
+  DEV_Digital_Write(LCD_DC_PIN,1);
+  DEV_Digital_Write(LCD_CS_PIN,0);
+
+  for (POINT Page = 0; Page < Font->Height; Page++) {         // for Height pixel rows..
+     for (POINT Column = 0; Column < Font->Width; Column++) { //    of Width pixels per row...
+        COLOR Color_to_use = (*ptr & (0x80 >> (Column % 8))) ? Color_Foreground : Color_Background;
+        SPI4W_Write_Byte(Color_to_use >> 8);
+        SPI4W_Write_Byte(Color_to_use & 0xff);
+        if (Column % 8 == 7) ptr++;  // eight pixels per byte
+     }
+     if (Font->Width % 8 != 0) ptr++; // font 'pixel rows' are byte aligned
+  }
+
+  DEV_Digital_Write(LCD_CS_PIN,1);
+  
+  sem_release(&display_char_sem); // 'this' core done with LCD access
+}
+#else
 void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
                     sFONT* Font, COLOR Color_Background, COLOR Color_Foreground) {
 
+  
   erase_col(Xpoint,Ypoint,Font,1); // effectively, erase entire character
     
   POINT Page, Column;
@@ -318,4 +351,5 @@ void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
        ptr++;
   }
 }
+#endif
 
