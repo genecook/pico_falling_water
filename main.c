@@ -125,8 +125,6 @@ void screen_saver() {
 }
 
 
-void erase_row(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount);
-void erase_col(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount);
 void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
                     sFONT* Font, COLOR Color_Background, COLOR Color_Foreground);
 
@@ -259,32 +257,6 @@ void update_display() {
 }
 
 //***************************************************************************
-// Instead of erasing individual characters from the display, blank out
-// entire rows or columns.
-//
-// Uses semaphore to allow both cores to use this function to update
-// the display.
-//***************************************************************************
-
-extern LCD_DIS sLCD_DIS;
-
-void erase_row(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
-  POINT Xend = Xstart + (Font->Width * Ncount);
-  POINT Yend = Ystart + Font->Height;
-  sem_acquire_blocking(&display_char_sem);
-  LCD_SetArealColor( Xstart, Ystart, Xend, Yend, BLACK);
-  sem_release(&display_char_sem);
-}
-
-void erase_col(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
-  POINT Xend = Xstart + Font->Width;
-  POINT Yend = Ystart + (Font->Height * Ncount);
-  sem_acquire_blocking(&display_char_sem);
-  LCD_SetArealColor( Xstart, Ystart, Xend, Yend, BLACK);
-  sem_release(&display_char_sem);
-}
-
-//***************************************************************************
 // Write a single character to the (LCD) display.
 //
 // Adapted from vendor supplied GUI_DisChar routine...
@@ -293,9 +265,6 @@ void erase_col(POINT Xstart, POINT Ystart, sFONT* Font, int Ncount) {
 // the display.
 //***************************************************************************
 
-#define BLAST_LCD_CHAR 1
-
-#ifdef BLAST_LCD_CHAR
 void my_GUI_DisChar(POINT Xstart, POINT Ystart, const char Acsii_Char,
                     sFONT* Font, COLOR Color_Background, COLOR Color_Foreground) {
   
@@ -324,32 +293,4 @@ void my_GUI_DisChar(POINT Xstart, POINT Ystart, const char Acsii_Char,
   
   sem_release(&display_char_sem); // 'this' core done with LCD access
 }
-#else
-void my_GUI_DisChar(POINT Xpoint, POINT Ypoint, const char Acsii_Char,
-                    sFONT* Font, COLOR Color_Background, COLOR Color_Foreground) {
-
-  
-  erase_col(Xpoint,Ypoint,Font,1); // effectively, erase entire character
-    
-  POINT Page, Column;
-
-  uint32_t Char_Offset = (Acsii_Char - ' ') * Font->Height * (Font->Width / 8 + (Font->Width % 8 ? 1 : 0));
-  const unsigned char *ptr = &Font->table[Char_Offset];
-
-  for (Page = 0; Page < Font->Height; Page ++ ) {
-     for (Column = 0; Column < Font->Width; Column ++ ) {
-	if (*ptr & (0x80 >> (Column % 8))) {
-          sem_acquire_blocking(&display_char_sem);
-          LCD_SetPointlColor(Xpoint + Column, Ypoint + Page, Color_Foreground);	
-          sem_release(&display_char_sem);
-        }
-        //One pixel is 8 bits
-        if (Column % 8 == 7)
-          ptr++;
-     }/* Write a line */
-     if (Font->Width % 8 != 0)
-       ptr++;
-  }
-}
-#endif
 
