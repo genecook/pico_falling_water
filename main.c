@@ -15,19 +15,25 @@
 // Program that writes random columns of text to an LCD display, crudely
 // simulating the streams of text you see in the Matrix.
 //
-// Runs on Raspberry Pi Pico. Uses Waveshare 2.8 LCD/touch panel.
+// Runs on Raspberry Pi Pico. Uses Waveshare 2.8 or 3.5 LCD/touch panel.
 //***************************************************************************
+
+//#define LCD_SIZE_2_8
+#define LCD_SIZE_3_5
 
 // using the vendor-supplied ascii character font, size 16 (16 high, 11 wide)...
 
 #define FONT_16_HEIGHT 16
 #define FONT_16_WIDTH  11
 
-// results in 20 rows of 22 characters per row...
-
 #define NROWS 20
+#ifdef LCD_SIZE_3_5
+// results in 20 rows of 44 characters per row...
+#define NCOLS 44
+#else
+// results in 20 rows of 22 characters per row...
 #define NCOLS 22
-
+#endif
 
 #define FLAG_VALUE 123
 

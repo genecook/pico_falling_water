@@ -4,9 +4,9 @@ set(CMAKE_MODULE_PATH $ENV{PICO_SDK_PATH} $ENV{PICO_EXAMPLES})
 
 include(pico_sdk_import)
 
-set(PICO_LCD_LIB $ENV{HOME}/Desktop/pico/Pico-ResTouch-LCD-X_X_Code/c)
+set(PICO_LCD_LIB $ENV{HOME}/Desktop/projects/Pico-ResTouch-LCD-X_X_Code/c)
 
-set(PICO_GUI $ENV{HOME}/Desktop/pico_gui)
+set(PICO_GUI $ENV{HOME}/Desktop/projects/pico_gui)
 
 project(rndstream C CXX ASM)
 
